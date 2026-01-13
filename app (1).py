@@ -1,4 +1,4 @@
-=import streamlit as st
+import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
@@ -14,7 +14,7 @@ from streamlit_geolocation import streamlit_geolocation
 # ==========================================
 WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
 
-# This prevents the app from crashing if secrets are missing
+# Prevents app crash if secrets are missing
 try:
     TWILIO_SID = st.secrets["TWILIO_SID"]
     TWILIO_AUTH = st.secrets["TWILIO_AUTH"]
@@ -30,7 +30,7 @@ MODEL_FILE_NAME = 'cyclone_model.joblib'
 # ==========================================
 # 🆘 EMERGENCY ALERT FUNCTION
 # ==========================================
-def trigger_emergency_alerts(phone, location, pressure, lat, lon):
+def trigger_emergency_alerts(phone, location, lat, lon):
     """Sends SMS with Map link and makes a Hindi Voice Call"""
     try:
         client = Client(TWILIO_SID, TWILIO_AUTH)
@@ -38,7 +38,7 @@ def trigger_emergency_alerts(phone, location, pressure, lat, lon):
         
         # 1. Send SMS
         client.messages.create(
-            body=f"🚨 SOS CYCLONE ALERT! Location: {location}. Map: {map_url}",
+            body=f"🚨 SOS CYCLONE ALERT! User needs help. Location: {map_url}",
             from_=TWILIO_PHONE,
             to=phone
         )
@@ -59,29 +59,29 @@ def trigger_emergency_alerts(phone, location, pressure, lat, lon):
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Cyclone Predictor & SOS", page_icon="🌪️", layout="wide")
-st.title("🌪️ North Indian Ocean Cyclone Predictor & SOS")
+st.title("🌪️ North Indian Ocean Cyclone Predictor & SOS Hub")
 
 # 2. LOAD MODEL
 model = joblib.load(MODEL_FILE_NAME)
 
 # 3. SIDEBAR SOS & CONTACTS
-st.sidebar.header("🆘 Manual SOS Hub")
-location_data = streamlit_geolocation() #
-phone_1 = st.sidebar.text_input("Primary Contact:", "+919999999999")
+st.sidebar.header("🆘 Web SOS Panic Button")
+# Get real-time GPS from browser
+location_data = streamlit_geolocation() 
+phone_1 = st.sidebar.text_input("Primary Contact (+91...):", "+919999999999")
 phone_2 = st.sidebar.text_input("Secondary Contact:", "")
 
 if st.sidebar.button("🚨 TRIGGER SOS NOW", type="primary", use_container_width=True):
     if location_data['latitude']:
-        with st.spinner("Calling emergency contacts..."):
+        with st.spinner("Initiating alerts..."):
             for p in [phone_1, phone_2]:
-                if p:
-                    status = trigger_emergency_alerts(p, "Live User Location", "Unknown", location_data['latitude'], location_data['longitude'])
-                    st.sidebar.success(f"Alerted {p}")
+                if p and len(p) > 5:
+                    trigger_emergency_alerts(p, "User Location", location_data['latitude'], location_data['longitude'])
+            st.sidebar.success("✅ Help is on the way! Alerts sent.")
     else:
         st.sidebar.warning("📍 Please allow location access in your browser.")
 
 st.sidebar.divider()
-mode = st.sidebar.radio("Mode:", ["📡 Live Weather (API)", "🎛️ Manual Simulation"])
+mode = st.sidebar.radio("Data Mode:", ["📡 Live Weather (API)", "🎛️ Manual Simulation"])
 
-# (Rest of your original weather fetching and map logic goes here...)
-#
+# (Rest of your original weather fetching and map logic follows...)
