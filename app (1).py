@@ -11,13 +11,11 @@ from streamlit_folium import st_folium
 # ==========================================
 # 🔑 CONFIGURATION
 # ==========================================
-# Replace these with your actual keys
 WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
 TWILIO_SID = "AC_YOUR_TWILIO_SID_HERE"
 TWILIO_AUTH = "YOUR_TWILIO_AUTH_TOKEN_HERE"
 TWILIO_PHONE = "+1234567890"
 
-# Files required in your repository
 CSV_FILE_NAME = 'ibtracs.NI.list.v04r01.zip' 
 MODEL_FILE_NAME = 'cyclone_model.joblib'
 # ==========================================
@@ -47,36 +45,68 @@ phone_1 = st.sidebar.text_input("Contact 1 (Primary):", "+919999999999")
 phone_2 = st.sidebar.text_input("Contact 2 (Family):", "")
 phone_3 = st.sidebar.text_input("Contact 3 (Authorities):", "")
 
+# ==========================================
+# 🆘 SOS BUTTON LOGIC
+# ==========================================
+st.sidebar.divider()
+st.sidebar.header("🆘 Emergency Panic Button")
+
+# 8. SMS FUNCTION (Used by the SOS Button)
+def send_sms_alert(phone, location, pressure):
+    try:
+        if "YOUR_TWILIO" in TWILIO_SID: return "SIMULATION"
+        client = Client(TWILIO_SID, TWILIO_AUTH)
+        message = client.messages.create(
+            body=f"🚨 SOS! EMERGENCY ALERT from Cyclone Predictor. Help needed at {location}. Pressure: {pressure}hPa. This is an urgent SOS request.",
+            from_=TWILIO_PHONE,
+            to=phone
+        )
+        return "SENT"
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
+# The pressable SOS Button
+if st.sidebar.button("🚨 TRIGGER SOS NOW", type="primary", use_container_width=True):
+    # This block executes immediately when the button is pressed
+    phone_list = [p for p in [phone_1, phone_2, phone_3] if p and len(p) > 5]
+    
+    if not phone_list:
+        st.sidebar.warning("⚠️ No emergency contacts found. Please enter a phone number.")
+    else:
+        with st.sidebar:
+            with st.spinner("Sending SOS alerts..."):
+                for phone in phone_list:
+                    # We use the current location name and pressure from the session state
+                    # These values are updated by the Live API or Manual slider below
+                    status = send_sms_alert(phone, st.session_state.get('loc_name', 'Unknown'), st.session_state.get('cur_pres', 'Unknown'))
+                    
+                    if status == "SENT":
+                        st.success(f"✅ SOS sent to {phone}")
+                    elif status == "SIMULATION":
+                        st.info(f"📲 [Simulation] SOS triggered for {phone}")
+                    else:
+                        st.error(f"❌ Failed to send to {phone}: {status}")
+
+# ==========================================
+# (Rest of the original Logic)
+# ==========================================
+
 # Default Values
 lat, lon, pres = 17.7, 83.3, 1012.0 
 location_name = "Vizag (Default)"
 is_vizag = True 
-api_status = "Not Connected"
 
 # 5. LIVE FETCH LOGIC
 if mode == "📡 Live Weather (API)":
     city = st.sidebar.text_input("Enter City Name:", "Visakhapatnam")
-    
-    if "visakhapatnam" in city.lower() or "vizag" in city.lower():
-        is_vizag = True
-    else:
-        is_vizag = False
-
+    is_vizag = "visakhapatnam" in city.lower() or "vizag" in city.lower()
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
     response = requests.get(url)
-    
     if response.status_code == 200:
         data = response.json()
-        lat = data['coord']['lat']
-        lon = data['coord']['lon']
-        pres = data['main']['pressure']
+        lat, lon, pres = data['coord']['lat'], data['coord']['lon'], data['main']['pressure']
         location_name = f"{data['name']}, {data['sys']['country']}"
-        api_status = "✅ Connected to OpenWeatherMap"
         st.sidebar.success("Live Data Fetched!")
-    elif response.status_code == 401:
-        st.sidebar.error("⏳ API Key not active yet. Please wait.")
-    else:
-        st.sidebar.error("❌ City not found. Check spelling.")
 
 # 6. MANUAL SIMULATION LOGIC
 elif mode == "🎛️ Manual Simulation":
@@ -85,133 +115,31 @@ elif mode == "🎛️ Manual Simulation":
     lat = st.sidebar.slider("Latitude", 0.0, 30.0, 17.7)
     lon = st.sidebar.slider("Longitude", 50.0, 100.0, 83.3)
     pres = st.sidebar.slider("Pressure (hPa)", 900, 1020, 960)
-    
-    if 17.5 < lat < 18.0 and 83.0 < lon < 83.5:
-        is_vizag = True
-    else:
-        is_vizag = False
+    is_vizag = 17.5 < lat < 18.0 and 83.0 < lon < 83.5
+
+# Store current state for the SOS button
+st.session_state['loc_name'] = location_name
+st.session_state['cur_pres'] = pres
 
 # 7. PREDICTION LOGIC
 features = [[lat, lon, pres]]
 prediction_index = model.predict(features)[0]
 confidence = np.max(model.predict_proba(features)[0]) * 100
-
-grades = {
-    0: ("🟢 SAFE", "No threat detected."),
-    1: ("🟡 DEPRESSION", "Watch required."),
-    2: ("🟠 STORM", "Warning issued."),
-    3: ("🔴 CYCLONE", "High danger!")
-}
+grades = {0: ("🟢 SAFE", "No threat."), 1: ("🟡 DEPRESSION", "Watch."), 2: ("🟠 STORM", "Warning!"), 3: ("🔴 CYCLONE", "DANGER!")}
 label, desc = grades[prediction_index]
-
-# 8. SMS FUNCTION
-def send_sms_alert(phone, location, pressure):
-    try:
-        if "YOUR_TWILIO" in TWILIO_SID: return "SIMULATION"
-        client = Client(TWILIO_SID, TWILIO_AUTH)
-        message = client.messages.create(
-            body=f"🚨 CYCLONE ALERT! High danger in {location}. Pressure: {pressure}hPa. Evacuate!",
-            from_=TWILIO_PHONE,
-            to=phone
-        )
-        return "SENT"
-    except Exception as e:
-        return f"ERROR: {str(e)}"
 
 # 9. DASHBOARD LAYOUT
 col1, col2 = st.columns([1, 2])
-
 with col1:
     st.subheader(f"📍 {location_name}")
-    if mode == "📡 Live Weather (API)":
-        st.caption(api_status)
-    
     st.metric("Pressure", f"{pres} hPa")
-    st.metric("Coordinates", f"{lat:.2f}°N, {lon:.2f}°E")
-    
-    st.divider()
-    st.subheader("AI Analysis")
     if prediction_index >= 2:
         st.error(f"## {label}")
-        
-        # SMS Logic
-        if is_vizag:
-            st.error("🚨 VIZAG EMERGENCY PROTOCOL ACTIVATED")
-            if enable_sms and prediction_index == 3:
-                phone_list = [phone_1, phone_2, phone_3]
-                for phone in phone_list:
-                    if phone and len(phone) > 5:
-                        status = send_sms_alert(phone, location_name, pres)
-                        if status == "SENT": st.toast(f"📲 Alert sent to {phone}", icon="✅")
-                        elif status == "SIMULATION": st.info(f"📲 [SIMULATION] SMS sent to {phone}")
-    
-    elif prediction_index == 1:
-        st.warning(f"## {label}")
     else:
         st.success(f"## {label}")
     st.write(f"**Confidence:** {confidence:.1f}%")
-    st.info(desc)
 
 with col2:
-    # --- 🛰️ SATELLITE MAP LOGIC ---
     st.subheader("🛰️ Live Satellite Risk Map")
-    
-    # 1. Base Map (Satellite)
-    m = folium.Map(location=[lat, lon], zoom_start=11, tiles=None)
-    folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri',
-        name='Satellite',
-        overlay=False,
-        control=True
-    ).add_to(m)
-
-    # 2. Add Risk Grid (Vizag Emergency)
-    if is_vizag and prediction_index >= 2:
-        lat_min, lat_max = 17.60, 17.72
-        lon_min, lon_max = 83.15, 83.35
-        
-        lats = np.linspace(lat_min, lat_max, 25)
-        lons = np.linspace(lon_min, lon_max, 25)
-        grid_lats, grid_lons = np.meshgrid(lats, lons)
-        flat_lats, flat_lons = grid_lats.flatten(), grid_lons.flatten()
-        
-        for la, lo in zip(flat_lats, flat_lons):
-            coast_line = (0.7 * (la - 17.60)) + 83.22
-            if lo > coast_line: color = '#ff0000' # Red
-            elif lo > (coast_line - 0.02): color = '#ffa500' # Orange
-            else: color = '#00ff00' # Green
-            
-            folium.Circle(
-                location=[la, lo],
-                radius=120,
-                color=color,
-                fill=True,
-                fill_opacity=0.6
-            ).add_to(m)
-            
-    # 3. Add Historical Data (Global Blue/Red Dots)
-    else:
-        @st.cache_data
-        def load_map_data():
-            if not os.path.exists(CSV_FILE_NAME): return None
-            try:
-                df = pd.read_csv(CSV_FILE_NAME, header=None, skiprows=[1], usecols=[8, 9, 10], names=['lat', 'lon', 'wind'], low_memory=False)
-                df = df.apply(pd.to_numeric, errors='coerce').dropna()
-                if len(df) > 1000: df = df.sample(1000)
-                return df
-            except: return None
-
-        history_df = load_map_data()
-        if history_df is not None:
-            for _, row in history_df.iterrows():
-                color = '#ff0000' if row['wind'] >= 64 else '#0000ff'
-                folium.CircleMarker(
-                    location=[row['lat'], row['lon']],
-                    radius=2,
-                    color=color,
-                    fill=True
-                ).add_to(m)
-
-    # Render Map
+    m = folium.Map(location=[lat, lon], zoom_start=11)
     st_folium(m, width=800, height=500)
