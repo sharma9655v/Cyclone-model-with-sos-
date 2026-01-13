@@ -9,42 +9,25 @@ from twilio.rest import Client
 from streamlit_geolocation import streamlit_geolocation
 
 # ==========================================
-# 🔑 CONFIGURATION
+# 🔑 CONFIGURATION (Using Secrets)
 # ==========================================
 WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
 
-# Use Streamlit Secrets for these values in production
+# Fetching credentials from Streamlit Secrets vault
 try:
     TWILIO_SID = st.secrets["TWILIO_SID"]
     TWILIO_AUTH = st.secrets["TWILIO_AUTH"]
     TWILIO_PHONE = st.secrets["TWILIO_PHONE"]
 except:
-    # Fallback for local testing (Replace with your actual keys)
-    TWILIO_SID = "AC_YOUR_TWILIO_SID_HERE"
-    TWILIO_AUTH = "YOUR_TWILIO_AUTH_TOKEN_HERE"
-    TWILIO_PHONE = "+1234567890"
-
-MODEL_FILE_NAME = 'cyclone_model.joblib'
-# ==========================================
-
-# 1. PAGE CONFIG
-st.set_page_config(page_title="Cyclone 3D SOS", page_icon="🌪️", layout="wide")
-st.title("🌪️ Cyclone Predictor & 3D SOS Hub")
-
-# 2. LOAD MODEL
-if not os.path.exists(MODEL_FILE_NAME):
-    st.error(f"❌ Model file '{MODEL_FILE_NAME}' not found.")
+    st.error("❌ Twilio Secrets not found! Add them in Settings > Secrets.")
     st.stop()
-model = joblib.load(MODEL_FILE_NAME)
 
-# 3. SIDEBAR: EMERGENCY CONTACTS & SOS
-st.sidebar.header("🚨 Emergency Hub")
-phone_1 = st.sidebar.text_input("Primary Contact:", "+919999999999")
-phone_2 = st.sidebar.text_input("Secondary Contact:", "")
+CSV_FILE_NAME = 'ibtracs.NI.list.v04r01.zip' 
+MODEL_FILE_NAME = 'cyclone_model.joblib'
 
-# Geolocation component
-location_data = streamlit_geolocation()
-
+# ==========================================
+# 🆘 EMERGENCY SOS LOGIC
+# ==========================================
 def trigger_sos_alerts(phones, lat, lon):
     """Sends SMS and Hindi Voice Call via Twilio"""
     client = Client(TWILIO_SID, TWILIO_AUTH)
@@ -53,7 +36,7 @@ def trigger_sos_alerts(phones, lat, lon):
     for p in phones:
         if p and len(p) > 5:
             try:
-                # 1. SMS Alert
+                # 1. Send SMS Alert
                 client.messages.create(
                     body=f"🚨 SOS CYCLONE ALERT! User needs help. Location: {map_url}",
                     from_=TWILIO_PHONE,
@@ -73,6 +56,19 @@ def trigger_sos_alerts(phones, lat, lon):
             except Exception as e:
                 st.sidebar.error(f"Error alerting {p}: {e}")
 
+# 1. PAGE SETUP
+st.set_page_config(page_title="Cyclone 3D SOS", layout="wide")
+st.title("🌪️ North Indian Ocean Cyclone Predictor & 3D SOS Hub")
+
+# 2. LOAD AI MODEL
+model = joblib.load(MODEL_FILE_NAME)
+
+# 3. SIDEBAR: EMERGENCY HUB
+st.sidebar.header("🚨 Emergency Hub")
+location_data = streamlit_geolocation() # Captures GPS from browser
+phone_1 = st.sidebar.text_input("Primary Contact:", "+919999999999")
+phone_2 = st.sidebar.text_input("Secondary Contact:", "")
+
 if st.sidebar.button("🚨 TRIGGER SOS NOW", type="primary", use_container_width=True):
     if location_data['latitude']:
         trigger_sos_alerts([phone_1, phone_2], location_data['latitude'], location_data['longitude'])
@@ -82,64 +78,49 @@ if st.sidebar.button("🚨 TRIGGER SOS NOW", type="primary", use_container_width
 
 # 4. WEATHER DATA FETCHING
 st.sidebar.divider()
-city = st.sidebar.text_input("Check City Risk:", "Visakhapatnam")
-weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
-res = requests.get(weather_url).json()
+city = st.sidebar.text_input("Analyze City Risk:", "Visakhapatnam")
+weather_res = requests.get(f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}").json()
 
-if 'coord' in res:
-    cur_lat, cur_lon = res['coord']['lat'], res['coord']['lon']
-    cur_pres = res['main']['pressure']
+if 'coord' in weather_res:
+    cur_lat, cur_lon = weather_res['coord']['lat'], weather_res['coord']['lon']
+    cur_pres = weather_res['main']['pressure']
     
-    # 5. PREDICTION
+    # 5. AI PREDICTION
     prediction = model.predict([[cur_lat, cur_lon, cur_pres]])[0]
-    risk_level = (prediction + 1) * 25  # Scale for 3D height
+    risk_height = (prediction + 1) * 2000 # Elevation for 3D bar
     
-    # 6. DASHBOARD & 3D MAP
-    col1, col2 = st.columns([1, 2])
+    # 6. 3D MAP VISUALIZATION
+    st.subheader(f"🛰️ 3D Storm Intensity Map: {city}")
     
-    with col1:
-        st.subheader(f"📍 {city}")
-        st.metric("Pressure", f"{cur_pres} hPa")
-        if prediction >= 2:
-            st.error("🔴 HIGH RISK / DANGER")
-        elif prediction == 1:
-            st.warning("🟡 MODERATE RISK")
-        else:
-            st.success("🟢 LOW RISK / SAFE")
+    # Prepare data for 3D Column
+    map_df = pd.DataFrame({'lat': [cur_lat], 'lon': [cur_lon], 'elevation': [risk_height]})
 
-    with col2:
-        st.subheader("🛰️ 3D Storm Intensity Map")
-        
-        # Prepare 3D Data
-        map_df = pd.DataFrame({
-            'lat': [cur_lat],
-            'lon': [cur_lon],
-            'elevation': [risk_level * 100]
-        })
+    
 
-        
-
-        st.pydeck_chart(pdk.Deck(
-            map_style='mapbox://styles/mapbox/navigation-night-v1',
-            initial_view_state=pdk.ViewState(
-                latitude=cur_lat,
-                longitude=cur_lon,
-                zoom=10,
-                pitch=50, # 3D Tilt
+    st.pydeck_chart(pdk.Deck(
+        map_style='mapbox://styles/mapbox/navigation-night-v1',
+        initial_view_state=pdk.ViewState(
+            latitude=cur_lat,
+            longitude=cur_lon,
+            zoom=10,
+            pitch=50, # Tilts the map for 3D perspective
+        ),
+        layers=[
+            pdk.Layer(
+                'ColumnLayer',
+                data=map_df,
+                get_position='[lon, lat]',
+                get_elevation='elevation',
+                elevation_scale=1,
+                radius=2000,
+                get_fill_color=[255, 0, 0, 160] if prediction >= 2 else [0, 255, 0, 160],
+                pickable=True,
+                extruded=True,
             ),
-            layers=[
-                pdk.Layer(
-                    'ColumnLayer',
-                    data=map_df,
-                    get_position='[lon, lat]',
-                    get_elevation='elevation',
-                    elevation_scale=100,
-                    radius=1500,
-                    get_fill_color=[255, 0, 0, 150] if prediction >= 2 else [0, 255, 0, 150],
-                    pickable=True,
-                    extruded=True,
-                ),
-            ],
-        ))
-else:
-    st.info("Enter a city name to generate the 3D map.")
+        ],
+    ))
+    
+    # Status Metrics
+    m1, m2 = st.columns(2)
+    m1.metric("Atmospheric Pressure", f"{cur_pres} hPa")
+    m2.metric("Risk Status", "🔴 DANGER" if prediction >= 2 else "🟢 SAFE")
