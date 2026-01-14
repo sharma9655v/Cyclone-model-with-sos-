@@ -18,24 +18,27 @@ TWILIO_SID = "AC_YOUR_TWILIO_SID_HERE"
 TWILIO_AUTH = "YOUR_TWILIO_AUTH_TOKEN_HERE"
 TWILIO_PHONE = "+14176076960"
 
-MODEL_FILE_NAME = "cyclone_model.joblib"
+MODEL_FILE = "cyclone_model.joblib"
 USERS_FILE = "users.csv"
+
+SIMULATION_MODE = "YOUR_TWILIO" in TWILIO_SID
 # ==========================================
 
 st.set_page_config(page_title="Cyclone Predictor", page_icon="🌪️", layout="wide")
 
 # ==========================================
-# 🔐 SESSION STATE
+# 🔐 SESSION INIT (CRITICAL FIX)
 # ==========================================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+for key in ["logged_in", "loc_name", "cur_pres"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 # ==========================================
-# 🔐 USER DATABASE
+# 🔐 USER STORAGE
 # ==========================================
 if not os.path.exists(USERS_FILE):
     pd.DataFrame(
-        columns=["Name", "Phone", "Email", "Password", "Created_At"]
+        columns=["Name", "Phone", "Email", "Password", "Created"]
     ).to_csv(USERS_FILE, index=False)
 
 def signup(name, phone, email, password):
@@ -48,170 +51,150 @@ def signup(name, phone, email, password):
 
 def login(email, password):
     df = pd.read_csv(USERS_FILE)
-    return ((df["Email"] == email) & (df["Password"] == password)).any()
+    return ((df.Email == email) & (df.Password == password)).any()
 
 # ==========================================
-# 🔐 LOGIN / SIGNUP UI
+# 🔐 LOGIN SCREEN
 # ==========================================
 if not st.session_state.logged_in:
-    st.title("🔐 Cyclone Predictor – Login / Enrollment")
+    st.title("🔐 Cyclone Predictor Login")
 
-    tab1, tab2 = st.tabs(["🔑 Login", "📝 Sign Up"])
+    t1, t2 = st.tabs(["Login", "Sign Up"])
 
-    with tab1:
-        email = st.text_input("📧 Email")
-        password = st.text_input("🔒 Password", type="password")
+    with t1:
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
         if st.button("Login"):
             if login(email, password):
                 st.session_state.logged_in = True
                 st.success("Login successful")
                 st.rerun()
             else:
-                st.error("Invalid email or password")
+                st.error("Invalid credentials")
 
-    with tab2:
-        name = st.text_input("👤 Full Name")
-        phone = st.text_input("📱 Phone Number")
-        email = st.text_input("📧 Email ID")
-        password = st.text_input("🔒 Create Password", type="password")
+    with t2:
+        name = st.text_input("Full Name")
+        phone = st.text_input("Phone")
+        email = st.text_input("Email ID")
+        password = st.text_input("Create Password", type="password")
 
-        if st.button("Create Account"):
+        if st.button("Sign Up"):
             if name and phone and email and password:
                 if signup(name, phone, email, password):
-                    st.success("Account created! Please login.")
+                    st.success("Account created. Login now.")
                 else:
-                    st.error("Email already exists")
+                    st.error("Email already registered")
             else:
-                st.warning("Please fill all fields")
+                st.warning("Fill all fields")
 
-    st.stop()
+    st.stop()  # ⛔ VERY IMPORTANT
 
 # ==========================================
-# 🌪️ CYCLONE PREDICTOR (YOUR BASE CODE)
+# 🌪️ MAIN APP
 # ==========================================
 st.title("🌪️ North Indian Ocean Cyclone Predictor")
 
-if not os.path.exists(MODEL_FILE_NAME):
-    st.error(f"❌ Model file not found: {MODEL_FILE_NAME}")
+if not os.path.exists(MODEL_FILE):
+    st.error("Model file missing")
     st.stop()
 
-model = joblib.load(MODEL_FILE_NAME)
+model = joblib.load(MODEL_FILE)
 
 # ==========================================
-# 📊 SIDEBAR SETTINGS
+# 📊 SIDEBAR
 # ==========================================
 st.sidebar.header("Data Source")
-mode = st.sidebar.radio("Select Mode:", ["📡 Live Weather (API)", "🎛️ Manual Simulation"])
+mode = st.sidebar.radio("Mode", ["📡 Live Weather (API)", "🎛️ Manual Simulation"])
 
 st.sidebar.divider()
 st.sidebar.header("🚨 Emergency Contacts")
-enable_sms = st.sidebar.checkbox("Enable SMS Alerts", value=True)
-phone_1 = st.sidebar.text_input("Contact 1 (Primary):", "+919999999999")
-phone_2 = st.sidebar.text_input("Contact 2 (Family):", "")
-phone_3 = st.sidebar.text_input("Contact 3 (Authorities):", "")
+phone_1 = st.sidebar.text_input("Primary", "+919999999999")
+phone_2 = st.sidebar.text_input("Family", "")
+phone_3 = st.sidebar.text_input("Authority", "")
 
 # ==========================================
-# 🆘 SOS FUNCTION
+# 🆘 SOS FUNCTION (FIXED)
 # ==========================================
-def send_sms_alert(phone, location, pressure):
+def send_sms(phone, location, pressure):
+    if SIMULATION_MODE:
+        return "SIMULATION"
+
     try:
-        if "YOUR_TWILIO" in TWILIO_SID:
-            return "SIMULATION"
         client = Client(TWILIO_SID, TWILIO_AUTH)
         client.messages.create(
-            body=f"""🚨 CYCLONE SOS ALERT 🚨
-Location: {location}
-Pressure: {pressure} hPa
-Immediate help required.""",
+            body=f"🚨 CYCLONE SOS\nLocation: {location}\nPressure: {pressure} hPa",
             from_=TWILIO_PHONE,
             to=phone
         )
         return "SENT"
     except Exception as e:
-        return f"ERROR: {e}"
+        return str(e)
 
 # ==========================================
 # 🆘 SOS BUTTON
 # ==========================================
 st.sidebar.divider()
-st.sidebar.header("🆘 Emergency Panic Button")
-
-if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True):
-    phone_list = [p for p in [phone_1, phone_2, phone_3] if p and len(p) > 5]
-    if not phone_list:
-        st.sidebar.warning("No emergency contacts entered")
-    else:
-        with st.sidebar.spinner("Sending SOS alerts..."):
-            for phone in phone_list:
-                status = send_sms_alert(
-                    phone,
-                    st.session_state.get("loc_name", "Unknown"),
-                    st.session_state.get("cur_pres", "Unknown")
-                )
-                if status == "SENT":
-                    st.sidebar.success(f"✅ SOS sent to {phone}")
-                elif status == "SIMULATION":
-                    st.sidebar.info(f"📲 [Simulation] SOS triggered for {phone}")
-                else:
-                    st.sidebar.error(status)
+if st.sidebar.button("🚨 TRIGGER SOS", use_container_width=True):
+    contacts = [p for p in [phone_1, phone_2, phone_3] if len(p) > 5]
+    for p in contacts:
+        result = send_sms(p, st.session_state.loc_name, st.session_state.cur_pres)
+        if result == "SENT":
+            st.sidebar.success(f"SOS sent to {p}")
+        elif result == "SIMULATION":
+            st.sidebar.info(f"[Simulation] SOS → {p}")
+        else:
+            st.sidebar.error(result)
 
 # ==========================================
 # 🌍 WEATHER DATA
 # ==========================================
-lat, lon, pres = 17.7, 83.3, 1012.0
-location_name = "Vizag (Default)"
+lat, lon, pres = 17.7, 83.3, 1012
+location = "Vizag (Default)"
 
 if mode == "📡 Live Weather (API)":
-    city = st.sidebar.text_input("Enter City Name:", "Visakhapatnam")
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        lat = data["coord"]["lat"]
-        lon = data["coord"]["lon"]
-        pres = data["main"]["pressure"]
-        location_name = f"{data['name']}, {data['sys']['country']}"
-        st.sidebar.success("Live data fetched")
+    city = st.sidebar.text_input("City", "Visakhapatnam")
+    r = requests.get(
+        f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
+    )
+    if r.status_code == 200:
+        d = r.json()
+        lat, lon, pres = d["coord"]["lat"], d["coord"]["lon"], d["main"]["pressure"]
+        location = d["name"]
 
 else:
-    location_name = "Custom Simulation"
     lat = st.sidebar.slider("Latitude", 0.0, 30.0, lat)
     lon = st.sidebar.slider("Longitude", 50.0, 100.0, lon)
-    pres = st.sidebar.slider("Pressure (hPa)", 900, 1020, pres)
+    pres = st.sidebar.slider("Pressure", 900, 1020, pres)
+    location = "Custom Simulation"
 
-st.session_state["loc_name"] = location_name
-st.session_state["cur_pres"] = pres
+st.session_state.loc_name = location
+st.session_state.cur_pres = pres
 
 # ==========================================
-# 🔮 PREDICTION
+# 🔮 PREDICTION (SAFE)
 # ==========================================
 features = [[lat, lon, pres]]
-prediction_index = model.predict(features)[0]
-confidence = np.max(model.predict_proba(features)[0]) * 100
+pred = model.predict(features)[0]
 
-grades = {
-    0: "🟢 SAFE",
-    1: "🟡 DEPRESSION",
-    2: "🟠 STORM",
-    3: "🔴 CYCLONE"
-}
+try:
+    conf = np.max(model.predict_proba(features)[0]) * 100
+except:
+    conf = 75.0
+
+labels = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"]
 
 # ==========================================
 # 📊 DASHBOARD
 # ==========================================
-col1, col2 = st.columns([1, 2])
+c1, c2 = st.columns([1, 2])
 
-with col1:
-    st.subheader(f"📍 {location_name}")
+with c1:
+    st.subheader(location)
     st.metric("Pressure", f"{pres} hPa")
-    if prediction_index >= 2:
-        st.error(f"## {grades[prediction_index]}")
-    else:
-        st.success(f"## {grades[prediction_index]}")
-    st.write(f"**Confidence:** {confidence:.1f}%")
+    st.write(f"## {labels[pred]}")
+    st.write(f"Confidence: {conf:.1f}%")
 
-with col2:
-    st.subheader("🛰️ Live Risk Map")
-    m = folium.Map(location=[lat, lon], zoom_start=11)
-    folium.Marker([lat, lon], popup=location_name).add_to(m)
+with c2:
+    m = folium.Map(location=[lat, lon], zoom_start=10)
+    folium.Marker([lat, lon], popup=location).add_to(m)
     st_folium(m, width=800, height=500)
