@@ -5,8 +5,7 @@ import pandas as pd
 import requests
 import os
 from twilio.rest import Client
-import folium
-from streamlit_folium import st_folium
+import pydeck as pdk
 from datetime import datetime
 
 # ==========================================
@@ -25,43 +24,11 @@ TWILIO_AUTH_2 = "6460cb8dfe71e335741bb20bc14c452a"
 TWILIO_PHONE_2 = "+14176076960"
 
 MODEL_FILE = "cyclone_model.joblib"
-USERS_FILE = "users.csv"
 
-# Check if at least one account is configured
+# Check if at least one account is configured correctly
 SIMULATION_MODE = "YOUR_PRIMARY" in TWILIO_SID_1
 
-st.set_page_config(page_title="Cyclone Predictor", page_icon="🌪️", layout="wide")
-
-# ==========================================
-# 🔐 SESSION INITIALIZATION
-# ==========================================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "loc_name" not in st.session_state:
-    st.session_state.loc_name = "Unknown"
-if "cur_pres" not in st.session_state:
-    st.session_state.cur_pres = 1012
-
-# ==========================================
-# 🔐 USER STORAGE & AUTH
-# ==========================================
-if not os.path.exists(USERS_FILE):
-    pd.DataFrame(columns=["Name", "Phone", "Email", "Password", "Created"]).to_csv(USERS_FILE, index=False)
-
-def signup(name, phone, email, password):
-    df = pd.read_csv(USERS_FILE)
-    if email in df["Email"].values:
-        return False
-    new_user = pd.DataFrame([[name, phone, email, password, datetime.now()]], 
-                            columns=["Name", "Phone", "Email", "Password", "Created"])
-    df = pd.concat([df, new_user], ignore_index=True)
-    df.to_csv(USERS_FILE, index=False)
-    return True
-
-def login(email, password):
-    df = pd.read_csv(USERS_FILE)
-    user_match = df[(df["Email"] == email) & (df["Password"] == str(password))]
-    return not user_match.empty
+st.set_page_config(page_title="3D Cyclone Predictor", page_icon="🌪️", layout="wide")
 
 # ==========================================
 # 🆘 SOS FUNCTION (DUAL ACCOUNT FAILOVER)
@@ -91,37 +58,12 @@ def trigger_sos(target_phone, location, pressure, label):
             call_content = f'<Response><Say language="hi-IN">Saavdhan! {location} mein chakravaat ka khatra hai. Kripya surakshit sthaan par jaye.</Say></Response>'
             client.calls.create(twiml=call_content, to=target_phone, from_=acc["from"])
             
-            return "SUCCESS" # If successful, stop trying other accounts
+            return "SUCCESS" 
         except Exception as e:
             last_error = str(e)
-            continue # Try the next account
+            continue 
             
     return last_error
-
-# ==========================================
-# 🔐 LOGIN/SIGNUP UI
-# ==========================================
-if not st.session_state.logged_in:
-    st.title("🔐 Cyclone Predictor Login")
-    t1, t2 = st.tabs(["Login", "Sign Up"])
-    with t1:
-        l_email = st.text_input("Email", key="login_email")
-        l_pass = st.text_input("Password", type="password", key="login_pass")
-        if st.button("Login"):
-            if login(l_email, l_pass):
-                st.session_state.logged_in = True
-                st.rerun()
-            else: st.error("Invalid credentials")
-    with t2:
-        s_name = st.text_input("Full Name")
-        s_phone = st.text_input("Phone Number")
-        s_email = st.text_input("Email ID")
-        s_pass = st.text_input("Create Password", type="password")
-        if st.button("Sign Up"):
-            if s_name and s_phone and s_email and s_pass:
-                if signup(s_name, s_phone, s_email, s_pass): st.success("Account created! Log in.")
-                else: st.error("Email already exists.")
-    st.stop()
 
 # ==========================================
 # 🌪️ MAIN APP CONTENT
@@ -145,7 +87,7 @@ st.sidebar.header("🚨 Emergency Contacts")
 p1 = st.sidebar.text_input("Primary Contact", "+917678495189")
 p2 = st.sidebar.text_input("Family Contact", "+918130631551")
 
-# Weather Logic (Needed for SOS context)
+# --- DATA ACQUISITION ---
 lat, lon, pres = 17.7, 83.3, 1012
 loc_display = "Visakhapatnam"
 
@@ -157,38 +99,33 @@ if mode == "📡 Live Weather (API)":
         if res.get("cod") == 200:
             lat, lon, pres = res["coord"]["lat"], res["coord"]["lon"], res["main"]["pressure"]
             loc_display = res["name"]
-    except: pass
+    except: st.sidebar.warning("API Error. Using defaults.")
 else:
     lat = st.sidebar.slider("Latitude", 0.0, 30.0, 17.7)
     lon = st.sidebar.slider("Longitude", 50.0, 100.0, 83.3)
     pres = st.sidebar.slider("Pressure (hPa)", 900, 1020, 1012)
     loc_display = "Simulation Area"
 
-# Save to state
-st.session_state.loc_name = loc_display
-st.session_state.cur_pres = pres
-
-# Run Prediction
+# --- PREDICTION ---
 labels = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"]
 prediction_idx = model.predict(np.array([[lat, lon, pres]]))[0]
 current_status = labels[prediction_idx]
 
-# --- SOS BUTTON IN SIDEBAR ---
+# --- SIDEBAR SOS BUTTON ---
 st.sidebar.divider()
 if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True, type="primary"):
     targets = [p for p in [p1, p2] if len(p) > 5]
     if not targets:
-        st.sidebar.warning("Please enter a phone number.")
+        st.sidebar.warning("Please enter a valid phone number.")
     else:
         for t in targets:
             with st.sidebar.spinner(f"Sending to {t}..."):
                 status = trigger_sos(t, loc_display, pres, current_status)
                 if status == "SUCCESS": st.sidebar.success(f"✅ Sent to {t}")
-                elif status == "SIMULATION": st.sidebar.info(f"Test Mode: Sent to {t}")
-                else: st.sidebar.error(f"Error {t}: {status}")
+                else: st.sidebar.error(f"Error: {status}")
 
 # ==========================================
-# 🌍 DASHBOARD DISPLAY
+# 🌍 3D DASHBOARD & PYDECK MAP
 # ==========================================
 col1, col2 = st.columns([1, 2])
 with col1:
@@ -196,9 +133,46 @@ with col1:
     st.metric("Atmospheric Pressure", f"{pres} hPa")
     st.markdown(f"### Current Status: {current_status}")
     if prediction_idx >= 2:
-        st.warning("⚠️ HIGH RISK! Immediate action recommended.")
+        st.warning("⚠️ HIGH RISK DETECTED!")
 
 with col2:
-    m = folium.Map(location=[lat, lon], zoom_start=8)
-    folium.Marker([lat, lon], popup=loc_display).add_to(m)
-    st_folium(m, width=700, height=450)
+    # 3D Coloring Logic (RGBA)
+    colors = [
+        [0, 255, 0, 160],   # Safe - Green
+        [255, 255, 0, 160], # Depression - Yellow
+        [255, 165, 0, 160], # Storm - Orange
+        [255, 0, 0, 180]    # Cyclone - Red
+    ]
+    active_color = colors[prediction_idx]
+
+    # Map state with 45-degree tilt for 3D effect
+    view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=9, pitch=45)
+    
+    # Layer 1: Highlighted circular boundary
+    boundary_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=pd.DataFrame([{"lat": lat, "lon": lon}]),
+        get_position="[lon, lat]",
+        get_color=active_color,
+        get_radius=15000, # 15km boundary highlight
+    )
+    
+    # Layer 2: 3D Pillar indicating intensity
+    pillar_layer = pdk.Layer(
+        "ColumnLayer",
+        data=pd.DataFrame([{"lat": lat, "lon": lon, "h": float((4 - prediction_idx) * 3500), "status": current_status}]),
+        get_position="[lon, lat]",
+        get_elevation="h",
+        elevation_scale=1,
+        radius=3000,
+        get_fill_color=active_color,
+        extruded=True,
+        pickable=True
+    )
+
+    st.pydeck_chart(pdk.Deck(
+        map_style='mapbox://styles/mapbox/dark-v10',
+        initial_view_state=view_state,
+        layers=[boundary_layer, pillar_layer],
+        tooltip={"text": "Location: {status}"}
+    ))
