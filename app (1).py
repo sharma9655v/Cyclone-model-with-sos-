@@ -142,8 +142,8 @@ mode = st.sidebar.radio("Input Mode", ["📡 Live Weather (API)", "🎛️ Manua
 
 st.sidebar.divider()
 st.sidebar.header("🚨 Emergency Contacts")
-p1 = st.sidebar.text_input("Primary Contact", "+919999999999")
-p2 = st.sidebar.text_input("Family Contact", "+91XXXXXXXXXX")
+p1 = st.sidebar.text_input("Primary Contact", "+917678495189")
+p2 = st.sidebar.text_input("Family Contact", "+918130631551")
 
 # Weather Logic (Needed for SOS context)
 lat, lon, pres = 17.7, 83.3, 1012
