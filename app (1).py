@@ -13,7 +13,8 @@ from datetime import datetime
 # 🔑 CONFIGURATION (2 TWILIO ACCOUNTS)
 # ==========================================
 WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
-# Account 1 Credentials (Primary)
+
+# Account 1 Credentials
 TWILIO_SID_1 = "ACc9b9941c778de30e2ed7ba57f87cdfbc" 
 TWILIO_AUTH_1 = "3cb1dfcb6a9a3cae88f4eff47e9458df"
 TWILIO_PHONE_1 = "+15075195618"
