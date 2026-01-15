@@ -10,25 +10,30 @@ from streamlit_folium import st_folium
 from datetime import datetime
 
 # ==========================================
-# 🔑 CONFIGURATION
+# 🔑 CONFIGURATION (2 TWILIO ACCOUNTS)
 # ==========================================
 WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
 
-# Replace with your actual credentials from Twilio Console
-TWILIO_SID = "AC_YOUR_TWILIO_SID_HERE" 
-TWILIO_AUTH = "YOUR_TWILIO_AUTH_TOKEN_HERE"
-TWILIO_PHONE = "+14176076960"
+# Account 1 Credentials
+TWILIO_SID_1 = "ACc9b9941c778de30e2ed7ba57f87cdfbc" 
+TWILIO_AUTH_1 = "3cb1dfcb6a9a3cae88f4eff47e9458df"
+TWILIO_PHONE_1 = "+15075195618"
+
+# Account 2 Credentials (Backup)
+TWILIO_SID_2 = "ACa12e602647785572ebaf765659d26d23"
+TWILIO_AUTH_2 = "6460cb8dfe71e335741bb20bc14c452a"
+TWILIO_PHONE_2 = "+14176076960"
 
 MODEL_FILE = "cyclone_model.joblib"
 USERS_FILE = "users.csv"
 
-# Check if Twilio is configured or in simulation mode
-SIMULATION_MODE = "YOUR_TWILIO" in TWILIO_SID
+# Check if at least one account is configured
+SIMULATION_MODE = "YOUR_PRIMARY" in TWILIO_SID_1
 
 st.set_page_config(page_title="Cyclone Predictor", page_icon="🌪️", layout="wide")
 
 # ==========================================
-# 🔐 SESSION INIT
+# 🔐 SESSION INITIALIZATION
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -59,29 +64,39 @@ def login(email, password):
     return not user_match.empty
 
 # ==========================================
-# 🆘 SOS FUNCTION (SMS + HINDI VOICE)
+# 🆘 SOS FUNCTION (DUAL ACCOUNT FAILOVER)
 # ==========================================
 def trigger_sos(target_phone, location, pressure, label):
     if SIMULATION_MODE:
         return "SIMULATION"
-    try:
-        client = Client(TWILIO_SID, TWILIO_AUTH)
-        
-        # 1. SMS Alert (English)
-        client.messages.create(
-            body=f"🚨 SOS: Cyclone Risk Detected!\nStatus: {label}\nLocation: {location}\nPressure: {pressure} hPa",
-            from_=TWILIO_PHONE,
-            to=target_phone
-        )
-        
-        # 2. Voice Alert (Hindi) - Per your instructions
-        # Note: Hindi voice requires 'hi-IN' language setting
-        call_content = f'<Response><Say language="hi-IN">Chetavani! {location} mein chakravaat ka khatra hai. Kripya savdhan rahe.</Say></Response>'
-        client.calls.create(twiml=call_content, to=target_phone, from_=TWILIO_PHONE)
-        
-        return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    
+    accounts = [
+        {"sid": TWILIO_SID_1, "token": TWILIO_AUTH_1, "from": TWILIO_PHONE_1},
+        {"sid": TWILIO_SID_2, "token": TWILIO_AUTH_2, "from": TWILIO_PHONE_2}
+    ]
+    
+    last_error = ""
+    for acc in accounts:
+        try:
+            client = Client(acc["sid"], acc["token"])
+            
+            # 1. SMS Alert (English)
+            client.messages.create(
+                body=f"🚨 SOS: Cyclone Risk Detected!\nStatus: {label}\nLocation: {location}\nPressure: {pressure} hPa",
+                from_=acc["from"],
+                to=target_phone
+            )
+            
+            # 2. Voice Alert (Hindi)
+            call_content = f'<Response><Say language="hi-IN">Saavdhan! {location} mein chakravaat ka khatra hai. Kripya surakshit sthaan par jaye.</Say></Response>'
+            client.calls.create(twiml=call_content, to=target_phone, from_=acc["from"])
+            
+            return "SUCCESS" # If successful, stop trying other accounts
+        except Exception as e:
+            last_error = str(e)
+            continue # Try the next account
+            
+    return last_error
 
 # ==========================================
 # 🔐 LOGIN/SIGNUP UI
@@ -120,7 +135,7 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# 📊 SIDEBAR (SOS Button positioned here)
+# 📊 SIDEBAR (SOS Button & Contacts)
 # ==========================================
 st.sidebar.header("Data Source")
 mode = st.sidebar.radio("Input Mode", ["📡 Live Weather (API)", "🎛️ Manual Simulation"])
@@ -128,10 +143,9 @@ mode = st.sidebar.radio("Input Mode", ["📡 Live Weather (API)", "🎛️ Manua
 st.sidebar.divider()
 st.sidebar.header("🚨 Emergency Contacts")
 p1 = st.sidebar.text_input("Primary Contact", "+919999999999")
-p2 = st.sidebar.text_input("Family Contact", "")
+p2 = st.sidebar.text_input("Family Contact", "+91XXXXXXXXXX")
 
-# Prediction Logic moved up so 'current_status' is available for the SOS button
-# We define default weather values first
+# Weather Logic (Needed for SOS context)
 lat, lon, pres = 17.7, 83.3, 1012
 loc_display = "Visakhapatnam"
 
@@ -150,12 +164,16 @@ else:
     pres = st.sidebar.slider("Pressure (hPa)", 900, 1020, 1012)
     loc_display = "Simulation Area"
 
+# Save to state
+st.session_state.loc_name = loc_display
+st.session_state.cur_pres = pres
+
 # Run Prediction
 labels = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"]
 prediction_idx = model.predict(np.array([[lat, lon, pres]]))[0]
 current_status = labels[prediction_idx]
 
-# --- THE SOS BUTTON IN SIDEBAR ---
+# --- SOS BUTTON IN SIDEBAR ---
 st.sidebar.divider()
 if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True, type="primary"):
     targets = [p for p in [p1, p2] if len(p) > 5]
@@ -178,7 +196,7 @@ with col1:
     st.metric("Atmospheric Pressure", f"{pres} hPa")
     st.markdown(f"### Current Status: {current_status}")
     if prediction_idx >= 2:
-        st.warning("⚠️ HIGH RISK! SOS triggers are active.")
+        st.warning("⚠️ HIGH RISK! Immediate action recommended.")
 
 with col2:
     m = folium.Map(location=[lat, lon], zoom_start=8)
