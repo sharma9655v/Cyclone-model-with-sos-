@@ -101,27 +101,7 @@ def trigger_sos(target_phone, location, pressure, label):
 # ==========================================
 # 🔐 LOGIN/SIGNUP UI
 # ==========================================
-if not st.session_state.logged_in:
-    st.title("🔐 Cyclone Predictor Login")
-    t1, t2 = st.tabs(["Login", "Sign Up"])
-    with t1:
-        l_email = st.text_input("Email", key="login_email")
-        l_pass = st.text_input("Password", type="password", key="login_pass")
-        if st.button("Login"):
-            if login(l_email, l_pass):
-                st.session_state.logged_in = True
-                st.rerun()
-            else: st.error("Invalid credentials")
-    with t2:
-        s_name = st.text_input("Full Name")
-        s_phone = st.text_input("Phone Number")
-        s_email = st.text_input("Email ID")
-        s_pass = st.text_input("Create Password", type="password")
-        if st.button("Sign Up"):
-            if s_name and s_phone and s_email and s_pass:
-                if signup(s_name, s_phone, s_email, s_pass): st.success("Account created! Log in.")
-                else: st.error("Email already exists.")
-    st.stop()
+#
 
 # ==========================================
 # 🌪️ MAIN APP CONTENT
