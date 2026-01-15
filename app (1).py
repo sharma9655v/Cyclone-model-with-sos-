@@ -25,19 +25,43 @@ TWILIO_AUTH_2 = "26210979738809eaf59a678e98fe2c0f"
 TWILIO_PHONE_2 = "+14176076960"
 
 MODEL_FILE = "cyclone_model.joblib"
+USERS_FILE = "users.csv"
 
 # Check if at least one account is configured
 SIMULATION_MODE = "YOUR_PRIMARY" in TWILIO_SID_1
 
-st.set_page_config(page_title="Cyclone Predictor & SOS", page_icon="🌪️", layout="wide")
+st.set_page_config(page_title="Cyclone Predictor", page_icon="🌪️", layout="wide")
 
 # ==========================================
 # 🔐 SESSION INITIALIZATION
 # ==========================================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 if "loc_name" not in st.session_state:
     st.session_state.loc_name = "Unknown"
 if "cur_pres" not in st.session_state:
     st.session_state.cur_pres = 1012
+
+# ==========================================
+# 🔐 USER STORAGE & AUTH
+# ==========================================
+if not os.path.exists(USERS_FILE):
+    pd.DataFrame(columns=["Name", "Phone", "Email", "Password", "Created"]).to_csv(USERS_FILE, index=False)
+
+def signup(name, phone, email, password):
+    df = pd.read_csv(USERS_FILE)
+    if email in df["Email"].values:
+        return False
+    new_user = pd.DataFrame([[name, phone, email, password, datetime.now()]], 
+                            columns=["Name", "Phone", "Email", "Password", "Created"])
+    df = pd.concat([df, new_user], ignore_index=True)
+    df.to_csv(USERS_FILE, index=False)
+    return True
+
+def login(email, password):
+    df = pd.read_csv(USERS_FILE)
+    user_match = df[(df["Email"] == email) & (df["Password"] == str(password))]
+    return not user_match.empty
 
 # ==========================================
 # 🆘 SOS FUNCTION (DUAL ACCOUNT FAILOVER)
@@ -67,12 +91,17 @@ def trigger_sos(target_phone, location, pressure, label):
             call_content = f'<Response><Say language="hi-IN">Saavdhan! {location} mein chakravaat ka khatra hai. Kripya surakshit sthaan par jaye.</Say></Response>'
             client.calls.create(twiml=call_content, to=target_phone, from_=acc["from"])
             
-            return "SUCCESS" 
+            return "SUCCESS" # If successful, stop trying other accounts
         except Exception as e:
             last_error = str(e)
-            continue 
+            continue # Try the next account
             
     return last_error
+
+# ==========================================
+# 🔐 LOGIN/SIGNUP UI
+# ==========================================
+#
 
 # ==========================================
 # 🌪️ MAIN APP CONTENT
@@ -96,15 +125,7 @@ st.sidebar.header("🚨 Emergency Contacts")
 p1 = st.sidebar.text_input("Primary Contact", "+919999999999")
 p2 = st.sidebar.text_input("Family Contact", "+91XXXXXXXXXX")
 
-# --- INTERACTIVE CHECKLIST ---
-st.sidebar.divider()
-st.sidebar.subheader("✅ Readiness Checklist")
-kit = st.sidebar.checkbox("Emergency Kit Ready")
-charge = st.sidebar.checkbox("Phone/Powerbank Charged")
-if kit and charge:
-    st.sidebar.success("Preparedness Level: High")
-
-# --- WEATHER LOGIC ---
+# Weather Logic (Needed for SOS context)
 lat, lon, pres = 17.7, 83.3, 1012
 loc_display = "Visakhapatnam"
 
@@ -123,6 +144,7 @@ else:
     pres = st.sidebar.slider("Pressure (hPa)", 900, 1020, 1012)
     loc_display = "Simulation Area"
 
+# Save to state
 st.session_state.loc_name = loc_display
 st.session_state.cur_pres = pres
 
@@ -142,6 +164,7 @@ if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True, type="pri
             with st.sidebar.spinner(f"Sending to {t}..."):
                 status = trigger_sos(t, loc_display, pres, current_status)
                 if status == "SUCCESS": st.sidebar.success(f"✅ Sent to {t}")
+                elif status == "SIMULATION": st.sidebar.info(f"Test Mode: Sent to {t}")
                 else: st.sidebar.error(f"Error {t}: {status}")
 
 # ==========================================
@@ -150,65 +173,12 @@ if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True, type="pri
 col1, col2 = st.columns([1, 2])
 with col1:
     st.subheader(f"📍 {loc_display}")
-    st.metric("Pressure", f"{pres} hPa")
+    st.metric("Atmospheric Pressure", f"{pres} hPa")
     st.markdown(f"### Current Status: {current_status}")
     if prediction_idx >= 2:
-        st.error("🚨 DANGER: Move to a safe location immediately!")
-    elif prediction_idx == 1:
-        st.warning("⚠️ ALERT: High winds expected. Be prepared.")
+        st.warning("⚠️ HIGH RISK! Immediate action recommended.")
 
 with col2:
-    hex_colors = ["#00FF00", "#FFFF00", "#FFA500", "#FF0000"]
-    active_color = hex_colors[prediction_idx]
-    
     m = folium.Map(location=[lat, lon], zoom_start=8)
     folium.Marker([lat, lon], popup=loc_display).add_to(m)
-    
-    # Highlight the search area with a colored boundary
-    folium.Circle(
-        location=[lat, lon],
-        radius=15000, # 15km
-        color=active_color,
-        fill=True,
-        fill_opacity=0.4
-    ).add_to(m)
-    
     st_folium(m, width=700, height=450)
-
-# ==========================================
-# 📋 COMPREHENSIVE SURVIVAL GUIDE
-# ==========================================
-st.divider()
-st.header("🩹 Advanced Cyclone Survival Guide")
-
-
-
-tab1, tab2, tab3 = st.tabs(["🕒 Phase 1: Preparation", "🌪️ Phase 2: During Storm", "🏠 Phase 3: Recovery"])
-
-with tab1:
-    st.markdown("""
-    **Before the cyclone hits:**
-    * **🌳 Structural Safety:** Trim tree branches near your house or power lines.
-    * **🧴 Water Storage:** Fill clean containers with at least 5-7 days' worth of drinking water.
-    * **📄 Documents:** Put ID, property papers, and insurance in a **waterproof bag**.
-    * **🧹 Clean Up:** Move loose outdoor items (trash bins, chairs) inside.
-    """)
-
-with tab2:
-    st.markdown("""
-    **While the storm is active:**
-    * **🚪 Stay Indoors:** Do not go out under any circumstances.
-    * **🛡️ Safe Spot:** Stay in the strongest part of the house (hallway or small bathroom) away from glass windows.
-    * **🔌 Electricity:** Switch off the main power supply and gas.
-    * **⚠️ The Eye:** If the wind stops suddenly, **do not go out**. The wind will return shortly.
-    """)
-
-
-
-with tab3:
-    st.markdown("""
-    **After the storm has passed:**
-    * **📻 Listen:** Wait for official 'All Clear' news from authorities.
-    * **⚡ Danger:** Stay away from fallen electric poles and broken wires.
-    * **🧤 Clean Up:** Wear strong shoes and gloves when clearing debris to avoid injury.
-    """)
