@@ -23,7 +23,7 @@ try:
     TWILIO_PHONE_2 = st.secrets["TWILIO_PHONE_2"]
     SIMULATION_MODE = False
 except Exception:
-    st.error("Secrets not configured! Running in Simulation Mode.")
+    # Fallback to simulation if secrets are missing
     SIMULATION_MODE = True
 
 MODEL_FILE = "cyclone_model.joblib"
@@ -49,13 +49,14 @@ if not os.path.exists(USERS_FILE):
 
 def login(email, password):
     df = pd.read_csv(USERS_FILE)
-    user_match = df[(df["Email"] == email) & (df["Password"] == str(password))]
+    # Ensure password is treated as string for comparison
+    user_match = df[(df["Email"] == email) & (df["Password"].astype(str) == str(password))]
     return not user_match.empty
 
 def signup(name, phone, email, password):
     df = pd.read_csv(USERS_FILE)
     if email in df["Email"].values: return False
-    new_user = pd.DataFrame([[name, phone, email, password, datetime.now()]], 
+    new_user = pd.DataFrame([[name, phone, email, str(password), datetime.now()]], 
                             columns=["Name", "Phone", "Email", "Password", "Created"])
     df = pd.concat([df, new_user], ignore_index=True)
     df.to_csv(USERS_FILE, index=False)
@@ -105,14 +106,15 @@ if not st.session_state.logged_in:
                 st.rerun()
             else: st.error("Invalid credentials")
     with t2:
-        sn = st.text_input("Full Name")
-        sp = st.text_input("Phone Number")
-        se = st.text_input("Email ID")
-        spa = st.text_input("Create Password", type="password")
+        sn = st.text_input("Full Name", key="s_name")
+        sp = st.text_input("Phone Number", key="s_phone")
+        se = st.text_input("Email ID", key="s_email")
+        spa = st.text_input("Create Password", type="password", key="s_pass")
         if st.button("Sign Up"):
             if sn and sp and se and spa:
-                if signup(sn, sp, se, spa): st.success("Account created!")
-                else: st.error("Email exists.")
+                if signup(sn, sp, se, spa): st.success("Account created! Log in now.")
+                else: st.error("Email already exists.")
+            else: st.warning("Please fill all fields.")
     st.stop()
 
 # ==========================================
@@ -148,20 +150,28 @@ else:
 st.session_state.loc_name, st.session_state.cur_pres = loc_display, pres
 
 # --- PREDICTION ---
-model = joblib.load(MODEL_FILE)
-labels = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"]
-prediction_idx = model.predict(np.array([[lat, lon, pres]]))[0]
-current_status = labels[prediction_idx]
+try:
+    model = joblib.load(MODEL_FILE)
+    labels = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"]
+    prediction_idx = model.predict(np.array([[lat, lon, pres]]))[0]
+    current_status = labels[prediction_idx]
+except Exception as e:
+    st.error(f"Model Error: {e}")
+    st.stop()
 
 # --- SIDEBAR SOS BUTTON ---
 st.sidebar.divider()
 if st.sidebar.button("🚨 TRIGGER SOS NOW", use_container_width=True, type="primary"):
     targets = [p for p in [p1, p2] if len(p) > 5]
-    for t in targets:
-        with st.sidebar.spinner(f"Sending to {t}..."):
-            status = trigger_sos(t, loc_display, pres, current_status)
-            if status == "SUCCESS": st.sidebar.success(f"✅ Sent to {t}")
-            else: st.sidebar.error(f"Error: {status}")
+    if not targets:
+        st.sidebar.warning("Please enter a valid phone number.")
+    else:
+        for t in targets:
+            with st.sidebar.spinner(f"Sending to {t}..."):
+                status = trigger_sos(t, loc_display, pres, current_status)
+                if status == "SUCCESS": st.sidebar.success(f"✅ Sent to {t}")
+                elif status == "SIMULATION": st.sidebar.info(f"Simulated SOS to {t}")
+                else: st.sidebar.error(f"Error: {status}")
 
 # ==========================================
 # 🌍 3D DASHBOARD & PYDECK MAP
@@ -184,27 +194,28 @@ with c2:
     # Layer 1: Highlighted circular boundary
     boundary_layer = pdk.Layer(
         "ScatterplotLayer",
-        data=[{"lat": lat, "lon": lon}],
+        data=pd.DataFrame([{"lat": lat, "lon": lon}]),
         get_position="[lon, lat]",
         get_color=active_color,
-        get_radius=15000, # 15km boundary
+        get_radius=15000, 
     )
     
     # Layer 2: 3D Pillar
     pillar_layer = pdk.Layer(
         "ColumnLayer",
-        data=[{"lat": lat, "lon": lon, "h": (4 - prediction_idx) * 3000}],
+        data=pd.DataFrame([{"lat": lat, "lon": lon, "h": float((4 - prediction_idx) * 3000), "status": current_status}]),
         get_position="[lon, lat]",
         get_elevation="h",
         elevation_scale=1,
         radius=3000,
         get_fill_color=active_color,
         extruded=True,
+        pickable=True
     )
 
     st.pydeck_chart(pdk.Deck(
         map_style='mapbox://styles/mapbox/dark-v10',
         initial_view_state=view_state,
         layers=[boundary_layer, pillar_layer],
-        tooltip={"text": "{current_status}"}
+        tooltip={"text": "Current Status: {status}"}
     ))
